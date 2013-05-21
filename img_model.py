@@ -20,7 +20,7 @@ baseweb = "/home/kilian/public_html/try_galaxy-cm/by_hand/optplot"
 
 # extra bits for this attempt
 
-extrabits = "try3/psf5"
+extrabits = "try4/psf5"
 
 
 # The default:
@@ -53,7 +53,7 @@ def optloop(tr):
 
 def optplot(image, tr, pub_name, comp, step, param):
             residual = abs(image.getImage() - tr.getModelImage(image))
-            bpl.compare(image.getImage(), tr.getModelImage(image),
+            bpl.wristband(image.getImage(), tr.getModelImage(image),
                     residual, tr.getChiImage(),
                     "{0}/{1}/{2}-{3}_step{4}_{5}.png".format(baseweb,
                         extrabits, pub_name, comp, step, param))
@@ -71,7 +71,8 @@ def MAD(image):
     sample_list = []
     for i in range(50):
         x, y = rd.randrange(0, row - 6), rd.randrange(0, col - 5)
-        sample_list += [ abs(image[x, y] - image[x + 5, y + 5]) ]
+        sample_list += [ abs(np.float64(image[x, y]) - np.float64(image[x + 5,
+            y + 5])) ]
 
     return np.median(np.array(sample_list))
 
@@ -136,6 +137,7 @@ for comp in range(dim):
     else:
         pic = picture[:,:,comp]
 
+    pic = pic.astype('float64')
     lenX, lenY = pic.shape
     med = np.median(pic)
     std_dev = MAGIC_NO * MAD(pic)
@@ -181,10 +183,17 @@ for comp in range(dim):
         posdat = rdls[1].data
 
         for j in range(len(posdat)):
-            mag = tractor.Mags(r=6.)
-            radec = tractor.RaDecPos(posdat[j][0], posdat[j][1])
-            ps = tractor.PointSource(radec, mag)
-            catalog.append(ps)
+            ra, dec = posdat[j]
+            t_radec = tractor.RaDecPos(ra, dec)
+            src_xy = wcs.positionToPixel(t_radec)
+            cent = np.rint(src_xy).astype("int")
+            if cent[0] < 0 or cent[0] >= lenY or cent[1] < 0 or cent[1] >= lenX:
+                continue
+            else:
+                mag = tractor.Mags(r=6.)
+                radec = tractor.RaDecPos(posdat[j][0], posdat[j][1])
+                ps = tractor.PointSource(radec, mag)
+                catalog.append(ps)
 
     print "sources found:"
     print catalog
@@ -197,26 +206,35 @@ for comp in range(dim):
 
     # Now to optimise
 
+    print "STEP 0:"
     step = 0
 
-    tr.freezeParamsRecursive('catalog')
+    tr.thawParam('catalog')
     tr.freezeParamsRecursive('images')
 
     for src in tr.getCatalog():
+        src.thawAllRecursive()
         src.freezeAllBut('brightness')
 
-    image.freezeAllBut('sky')
+    print "And the thawed params for brightness optimisation are:"
+    for nm in tr.getParamNames():
+        print " ", nm
+
+#    image.freezeAllBut('sky')
     optloop(tr)
-    param = "skynbright"
+    param = "brightness" # "skynbright"
     optplot(image, tr, pub_name, comp, step, param)
     step += 1
+
+
+    print "STEP 1"
 
     cat = tr.getCatalog()
     '''Initial log probability.'''
 #    lnp0 = tr.getLogProb()
     '''Switch source i to a galaxy.'''
     problist = []
-    for i in range(len(cat)):
+    for i in range(10): # len(cat)):
 
         oldsrc = cat[i]
 
@@ -265,6 +283,8 @@ for comp in range(dim):
             pass
 
 
+    print "FINISHED SWITCHING TO GALAXIES"
+
     tr.freezeParamsRecursive('images')
     tr.thawParam('catalog')
 
@@ -277,6 +297,8 @@ for comp in range(dim):
     optplot(image, tr, pub_name, comp, step, param)
     step += 1
 
+
+    print "STEP 2:"
 
     '''sky + flux + gal shape'''
     tr.freezeParamsRecursive('catalog')
